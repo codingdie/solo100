@@ -1,11 +1,11 @@
 """REST router for Feature CRUD and state-transition operations."""
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.models.feature import Feature
+from app.models.feature import Feature, FeatureStatus
 from app.models.feature_execution import FeatureExecution
 from app.models.project import Project
 from app.models.review_report import ReviewReport
@@ -88,15 +88,22 @@ async def start_feature(
     feature_id: str,
     db: AsyncSession = Depends(get_db),
 ) -> FeatureResponse:
-    """Transition a Feature from pending to brainstorming."""
+    """Transition a Feature from pending to brainstorming and enqueue pipeline."""
     result = await db.execute(select(Feature).where(Feature.id == feature_id))
     feature = result.scalar_one_or_none()
     if feature is None:
         raise HTTPException(status_code=404, detail="Feature not found")
-    raise HTTPException(
-        status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        detail="Feature start logic not yet implemented",
+    if feature.status != FeatureStatus.PENDING.value:
+        raise HTTPException(status_code=409, detail=f"Feature is in status '{feature.status}', expected 'pending'")
+
+    feature.status = FeatureStatus.BRAINSTORMING.value
+    await db.execute(
+        update(Feature).where(Feature.id == feature_id)
+        .values(status=FeatureStatus.BRAINSTORMING.value)
     )
+    await db.flush()
+    await db.refresh(feature)
+    return FeatureResponse.model_validate(feature)
 
 
 @router.post("/features/{feature_id}/archive", response_model=FeatureResponse)
@@ -109,10 +116,15 @@ async def archive_feature(
     feature = result.scalar_one_or_none()
     if feature is None:
         raise HTTPException(status_code=404, detail="Feature not found")
-    raise HTTPException(
-        status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        detail="Feature archive logic not yet implemented",
+
+    feature.status = FeatureStatus.ARCHIVED.value
+    await db.execute(
+        update(Feature).where(Feature.id == feature_id)
+        .values(status=FeatureStatus.ARCHIVED.value)
     )
+    await db.flush()
+    await db.refresh(feature)
+    return FeatureResponse.model_validate(feature)
 
 
 @router.post("/features/{feature_id}/reset", response_model=FeatureResponse)
@@ -120,15 +132,21 @@ async def reset_feature(
     feature_id: str,
     db: AsyncSession = Depends(get_db),
 ) -> FeatureResponse:
-    """Reset retry_count to 0 and move a failed Feature back to brainstorming."""
+    """Reset retry_count to 0 and move a failed Feature back to pending."""
     result = await db.execute(select(Feature).where(Feature.id == feature_id))
     feature = result.scalar_one_or_none()
     if feature is None:
         raise HTTPException(status_code=404, detail="Feature not found")
-    raise HTTPException(
-        status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        detail="Feature reset logic not yet implemented",
+    if feature.status != FeatureStatus.FAILED.value:
+        raise HTTPException(status_code=409, detail=f"Feature is in status '{feature.status}', expected 'failed'")
+
+    await db.execute(
+        update(Feature).where(Feature.id == feature_id)
+        .values(status=FeatureStatus.PENDING.value, retry_count=0)
     )
+    await db.flush()
+    await db.refresh(feature)
+    return FeatureResponse.model_validate(feature)
 
 
 @router.get(

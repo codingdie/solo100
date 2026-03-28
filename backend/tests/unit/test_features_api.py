@@ -85,8 +85,8 @@ async def test_get_feature_not_found(client: AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
-async def test_start_feature_returns_501(client: AsyncClient) -> None:
-    """POST /features/{id}/start returns 501 (not yet implemented)."""
+async def test_start_feature_from_pending(client: AsyncClient) -> None:
+    """POST /features/{id}/start transitions pending → brainstorming."""
     project_id = await _create_project(client)
     create_resp = await client.post(f"/api/v1/projects/{project_id}/features", json={
         "title": "Start test",
@@ -95,12 +95,13 @@ async def test_start_feature_returns_501(client: AsyncClient) -> None:
     feature_id = create_resp.json()["id"]
 
     resp = await client.post(f"/api/v1/features/{feature_id}/start")
-    assert resp.status_code == 501
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "brainstorming"
 
 
 @pytest.mark.asyncio
-async def test_archive_feature_returns_501(client: AsyncClient) -> None:
-    """POST /features/{id}/archive returns 501 (not yet implemented)."""
+async def test_archive_feature(client: AsyncClient) -> None:
+    """POST /features/{id}/archive moves feature to archived."""
     project_id = await _create_project(client)
     create_resp = await client.post(f"/api/v1/projects/{project_id}/features", json={
         "title": "Archive test",
@@ -109,12 +110,13 @@ async def test_archive_feature_returns_501(client: AsyncClient) -> None:
     feature_id = create_resp.json()["id"]
 
     resp = await client.post(f"/api/v1/features/{feature_id}/archive")
-    assert resp.status_code == 501
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "archived"
 
 
 @pytest.mark.asyncio
-async def test_reset_feature_returns_501(client: AsyncClient) -> None:
-    """POST /features/{id}/reset returns 501 (not yet implemented)."""
+async def test_reset_feature_from_failed(client: AsyncClient) -> None:
+    """POST /features/{id}/reset requires failed status."""
     project_id = await _create_project(client)
     create_resp = await client.post(f"/api/v1/projects/{project_id}/features", json={
         "title": "Reset test",
@@ -122,8 +124,9 @@ async def test_reset_feature_returns_501(client: AsyncClient) -> None:
     })
     feature_id = create_resp.json()["id"]
 
+    # pending → reset should fail with 409
     resp = await client.post(f"/api/v1/features/{feature_id}/reset")
-    assert resp.status_code == 501
+    assert resp.status_code == 409
 
 
 @pytest.mark.asyncio
@@ -156,8 +159,8 @@ async def test_get_feature_review_none(client: AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
-async def test_approve_feature_returns_501(client: AsyncClient) -> None:
-    """POST /features/{id}/approve returns 501 (not yet implemented)."""
+async def test_approve_feature_pending_returns_409(client: AsyncClient) -> None:
+    """POST /features/{id}/approve returns 409 for pending status (invalid action)."""
     project_id = await _create_project(client)
     create_resp = await client.post(f"/api/v1/projects/{project_id}/features", json={
         "title": "Approve test",
@@ -166,12 +169,12 @@ async def test_approve_feature_returns_501(client: AsyncClient) -> None:
     feature_id = create_resp.json()["id"]
 
     resp = await client.post(f"/api/v1/features/{feature_id}/approve")
-    assert resp.status_code == 501
+    assert resp.status_code == 409
 
 
 @pytest.mark.asyncio
-async def test_reject_feature_returns_501(client: AsyncClient) -> None:
-    """POST /features/{id}/reject returns 501 (not yet implemented)."""
+async def test_reject_feature_pending_returns_409(client: AsyncClient) -> None:
+    """POST /features/{id}/reject returns 409 for pending status (invalid action)."""
     project_id = await _create_project(client)
     create_resp = await client.post(f"/api/v1/projects/{project_id}/features", json={
         "title": "Reject test",
@@ -180,4 +183,4 @@ async def test_reject_feature_returns_501(client: AsyncClient) -> None:
     feature_id = create_resp.json()["id"]
 
     resp = await client.post(f"/api/v1/features/{feature_id}/reject")
-    assert resp.status_code == 501
+    assert resp.status_code == 409
