@@ -19,14 +19,17 @@ from app.database import get_db_context
 from app.models.feature import Feature, FeatureStatus
 from app.models.feature_execution import ExecutionStage, ExecutionStatus, FeatureExecution
 from app.models.project import Project
+from app.agents.base import BaseAgent
+from app.agents.claude_code import ClaudeCodeAgent
 from app.services.git_manager import IGitManager, git_manager as _git_manager
 from app.services.notification_hub import (
     notify_awaiting_approval,
     notify_error,
     notify_stage_completed,
     notify_status_changed,
+    notify_log,
 )
-from app.services.review_engine import ReviewEngineStub
+from app.services.review_engine import ReviewEngine, ReviewEngineStub
 from app.services.stage_results import (
     BrainstormResult,
     ImplementResult,
@@ -65,11 +68,13 @@ class FeatureExecutor:
     def __init__(
         self,
         git_manager: IGitManager | None = None,
+        agent: BaseAgent | None = None,
         poll_interval: int = POLL_INTERVAL,
         max_wait_cycles: int = MAX_WAIT_CYCLES,
     ) -> None:
         self._git: IGitManager = git_manager or _git_manager
-        self._review_engine = ReviewEngineStub()
+        self._agent: BaseAgent = agent or ClaudeCodeAgent()
+        self._review_engine = ReviewEngine()
         self._poll_interval = poll_interval
         self._max_wait_cycles = max_wait_cycles
 
@@ -169,16 +174,10 @@ class FeatureExecutor:
     async def _run_brainstorming(self, db: AsyncSession, feature: Feature) -> None:
         logger.info("Stage brainstorming started for Feature %s", feature.id)
 
-        result = BrainstormResult(
-            analysis=f"[STUB] AI analysis of: {feature.title}\n\n{feature.description}",
-            acceptance_criteria=[
-                f"Feature '{feature.title}' is fully implemented",
-                "All unit tests pass",
-                "Code is reviewed and approved",
-            ],
-            key_points=["Implement the core feature logic", "Add corresponding unit tests"],
-            estimated_risk="medium",
-        )
+        async def _log(line: str) -> None:
+            await notify_log(feature.id, ExecutionStage.BRAINSTORMING.value, line)
+
+        result = await self._agent.brainstorm(feature, notify_log=_log)
 
         await self._write_execution(
             db, feature, ExecutionStage.BRAINSTORMING, ExecutionStatus.COMPLETED, result.to_dict(),
@@ -188,16 +187,20 @@ class FeatureExecutor:
     async def _run_planning(self, db: AsyncSession, feature: Feature) -> None:
         logger.info("Stage planning started for Feature %s", feature.id)
 
-        result = Plan(
-            tasks=[
-                {"title": f"Implement {feature.title}", "file_patterns": ["src/**/*.py"],
-                 "description": f"Implement the {feature.title} feature."},
-                {"title": "Add unit tests", "file_patterns": ["tests/**/*.py"],
-                 "description": "Add unit tests for the new feature."},
-            ],
-            estimated_risk="medium",
-            raw_output="[STUB] Real planning logic in Plan 3",
+        # Load brainstorm result from last execution
+        latest = await self._latest_execution(db, feature.id, ExecutionStage.BRAINSTORMING.value)
+        brainstorm_data = json.loads(latest.result_json or "{}") if latest else {}
+        brainstorm = BrainstormResult(
+            analysis=brainstorm_data.get("analysis", ""),
+            acceptance_criteria=brainstorm_data.get("acceptance_criteria", []),
+            key_points=brainstorm_data.get("key_points", []),
+            estimated_risk=brainstorm_data.get("estimated_risk", "medium"),
         )
+
+        async def _log(line: str) -> None:
+            await notify_log(feature.id, ExecutionStage.PLANNING.value, line)
+
+        result = await self._agent.plan(feature, brainstorm, notify_log=_log)
 
         await self._transition_to(db, feature, FeatureStatus.PLANNING.value)
         await self._write_execution(
@@ -210,19 +213,38 @@ class FeatureExecutor:
         await self._transition_to(db, feature, FeatureStatus.IMPLEMENTING.value)
 
         project = await self._load_project(db, feature.project_id)
-        worktree_path = feature.worktree_path or f"/tmp/solo100/worktrees/{feature.id}"
         branch_name = feature.branch or f"feat/{feature.id[:8]}-{_slugify(feature.title)}"
+        worktree_path = feature.worktree_path or f"/tmp/solo100/worktrees/{feature.id}"
 
-        await self._git.create_branch(repo_path="/tmp/solo100/repos/test", branch_name=branch_name)
-        await self._git.create_worktree(
-            repo_path="/tmp/solo100/repos/test", branch_name=branch_name, worktree_path=worktree_path,
+        if project:
+            repo_path = f"/tmp/solo100/repos/{project.id}"
+            await self._git.clone(project.ssh_url, f"/tmp/solo100/repos", project.ssh_key_env)
+            await self._git.create_branch(repo_path=repo_path, branch_name=branch_name)
+            await self._git.create_worktree(
+                repo_path=repo_path, branch_name=branch_name, worktree_path=worktree_path,
+            )
+
+        # Load plan from last execution
+        latest = await self._latest_execution(db, feature.id, ExecutionStage.PLANNING.value)
+        plan_data = json.loads(latest.result_json or "{}") if latest else {}
+        plan = Plan(
+            tasks=plan_data.get("tasks", []),
+            estimated_risk=plan_data.get("estimated_risk", "medium"),
+            raw_output=plan_data.get("raw_output", ""),
         )
 
-        result = ImplementResult(
-            files_changed=["src/example.py"],
-            summary=f"[STUB] Implemented {feature.title}",
-            commit_hash="stub_commit_abc123",
-        )
+        async def _log(line: str) -> None:
+            await notify_log(feature.id, ExecutionStage.IMPLEMENTING.value, line)
+
+        result = await self._agent.implement(feature, plan, worktree_path, notify_log=_log)
+
+        if result.files_changed:
+            commit_result = await self._git.commit(
+                worktree_path=worktree_path,
+                message=f"feat: {feature.title}",
+                files=result.files_changed,
+            )
+            result.commit_hash = commit_result.commit_hash
 
         await self._write_execution(
             db, feature, ExecutionStage.IMPLEMENTING, ExecutionStatus.COMPLETED, result.to_dict(),
