@@ -1,7 +1,6 @@
 """Notification Hub — single source for all push notifications.
 
-v0.1: WebSocket channel only.
-v0.4: Adds Feishu channel (out of scope for this plan).
+v0.1: WebSocket + Feishu channels.
 """
 
 import logging
@@ -50,6 +49,45 @@ class WebSocketChannel(NotificationChannel):
         await push_feature_event(feature_id, payload)
 
 
+class FeishuChannel(NotificationChannel):
+    """Push important status-change events to Feishu Webhook.
+
+    Only STATUS_CHANGED, APPROVAL_REQUIRED, and ERROR events are forwarded —
+    LOG events are too noisy for Feishu.
+    """
+
+    _IMPORTANT_TYPES = {
+        FeatureEventType.STATUS_CHANGED.value,
+        FeatureEventType.APPROVAL_REQUIRED.value,
+        FeatureEventType.ERROR.value,
+    }
+
+    def __init__(self) -> None:
+        from app.services.feishu_client import FeishuClient
+        self._client = FeishuClient()
+
+    async def send(self, feature_id: str, payload: dict[str, Any]) -> None:
+        if payload.get("type") not in self._IMPORTANT_TYPES:
+            return
+        if not self._client.is_configured:
+            return
+
+        event_type = payload.get("type", "")
+        message = payload.get("message", "")
+        title = {
+            FeatureEventType.STATUS_CHANGED.value: "🔄 Feature Status Changed",
+            FeatureEventType.APPROVAL_REQUIRED.value: "⏳ Approval Required",
+            FeatureEventType.ERROR.value: "❌ Feature Error",
+        }.get(event_type, "solo100 Notification")
+
+        await self._client.post_feature_event(
+            feature_id=feature_id,
+            event_type=event_type,
+            title=title,
+            message=message or "",
+        )
+
+
 class NotificationHub:
     """Unified push notification hub."""
 
@@ -74,6 +112,7 @@ class NotificationHub:
 # Module-level singleton
 hub = NotificationHub()
 hub.register_channel(WebSocketChannel())
+hub.register_channel(FeishuChannel())
 
 
 async def notify_status_changed(
