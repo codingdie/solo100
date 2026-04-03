@@ -13,3 +13,4 @@ build/
 venv/
 node_modules/
 .next/
+.worktrees
