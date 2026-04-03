@@ -1,0 +1,55 @@
+# =============================================================================
+# solo100 集成测试镜像
+# 包含：Python 3.11 + Node.js 20 + Redis + Playwright + 所有运行时依赖
+# =============================================================================
+FROM python:3.11-slim
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV TZ=Asia/Shanghai
+
+# 安装系统依赖
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git \
+    curl \
+    redis-server \
+    gnupg \
+    ca-certificates \
+    wget \
+    && rm -rf /var/lib/apt/lists/*
+
+# 安装 Node.js 20
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y nodejs \
+    && rm -rf /var/lib/apt/lists/*
+
+# Python 测试依赖（包含 playwright）
+COPY .worktrees/integration-test/backend/requirements.txt /tmp/requirements.txt
+RUN pip install --no-cache-dir -r /tmp/requirements.txt
+
+# 安装 Playwright + Chromium
+RUN pip install --no-cache-dir playwright==1.42.0 \
+    && playwright install --with-deps chromium
+
+# 安装前端依赖
+COPY .worktrees/integration-test/frontend/package.json /frontend/package.json
+COPY .worktrees/integration-test/frontend/package-lock.json /frontend/package-lock.json
+RUN cd /frontend && npm ci --prefer-offline
+
+# 复制源码
+COPY .worktrees/integration-test/ /app
+
+WORKDIR /app
+
+# wait-for-it（等待服务就绪的脚本）
+RUN wget -qO /usr/local/bin/wait-for-it https://raw.githubusercontent.com/vishnubob/wait-for-it/master/wait-for-it.sh \
+    && chmod +x /usr/local/bin/wait-for-it
+
+COPY entrypoint-test.sh /entrypoint-test.sh
+RUN chmod +x /entrypoint-test.sh
+
+# 非 root 用户
+RUN useradd --create-home --shell /bin/bash testuser && \
+    chown -R testuser:testuser /app /frontend /tmp
+USER testuser
+
+CMD ["/entrypoint-test.sh"]
