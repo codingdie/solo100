@@ -10,7 +10,7 @@ class FeatureBase(BaseModel):
     """Shared fields for Feature create/update."""
 
     title: Annotated[str, Field(min_length=1, max_length=500)]
-    description: Annotated[str, Field(min_length=1)]
+    description: str = ""
 
 
 class FeatureCreate(FeatureBase):

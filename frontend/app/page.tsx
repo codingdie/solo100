@@ -10,9 +10,9 @@ export default function HomePage() {
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState<CreateProjectPayload>({
     name: "",
-    repo_url: "",
-    branch: "main",
-    description: "",
+    ssh_url: "",
+    default_branch: "main",
+    ssh_key_env: "SSH_KEY",
   });
   const [submitting, setSubmitting] = useState(false);
 
@@ -22,7 +22,7 @@ export default function HomePage() {
     try {
       await createProject(form);
       setShowForm(false);
-      setForm({ name: "", repo_url: "", branch: "main", description: "" });
+      setForm({ name: "", ssh_url: "", default_branch: "main", ssh_key_env: "SSH_KEY" });
     } finally {
       setSubmitting(false);
     }
@@ -55,23 +55,22 @@ export default function HomePage() {
           />
           <input
             required
-            placeholder="Git 仓库地址"
-            value={form.repo_url}
-            onChange={(e) => setForm({ ...form, repo_url: e.target.value })}
+            placeholder="Git SSH 地址"
+            value={form.ssh_url}
+            onChange={(e) => setForm({ ...form, ssh_url: e.target.value })}
             className="w-full border rounded px-3 py-2"
           />
           <input
             placeholder="分支 (默认 main)"
-            value={form.branch}
-            onChange={(e) => setForm({ ...form, branch: e.target.value })}
+            value={form.default_branch}
+            onChange={(e) => setForm({ ...form, default_branch: e.target.value })}
             className="w-full border rounded px-3 py-2"
           />
-          <textarea
-            placeholder="描述（可选）"
-            value={form.description}
-            onChange={(e) => setForm({ ...form, description: e.target.value })}
+          <input
+            placeholder="SSH Key 环境变量名"
+            value={form.ssh_key_env}
+            onChange={(e) => setForm({ ...form, ssh_key_env: e.target.value })}
             className="w-full border rounded px-3 py-2"
-            rows={2}
           />
           <div className="flex gap-2">
             <button
@@ -103,10 +102,7 @@ export default function HomePage() {
               className="block p-4 border rounded bg-white hover:shadow transition"
             >
               <div className="font-semibold">{p.name}</div>
-              {p.description && (
-                <div className="text-sm text-gray-500 mt-1">{p.description}</div>
-              )}
-              <div className="text-xs text-gray-400 mt-1">{p.repo_url}</div>
+              <div className="text-xs text-gray-400 mt-1">{p.ssh_url}</div>
             </Link>
           </li>
         ))}

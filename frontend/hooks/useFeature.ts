@@ -12,7 +12,7 @@ export function useFeatures(projectId: string) {
     setLoading(true);
     api.features
       .list(projectId)
-      .then(setFeatures)
+      .then((data) => setFeatures(data.items))
       .catch((e: Error) => setError(e.message))
       .finally(() => setLoading(false));
   }, [projectId]);

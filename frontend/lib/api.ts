@@ -10,9 +10,9 @@ const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 export interface Project {
   id: string;
   name: string;
-  description: string | null;
-  repo_url: string;
-  branch: string;
+  ssh_url: string;
+  default_branch: string;
+  ssh_key_env: string;
   created_at: string;
 }
 
@@ -61,9 +61,9 @@ export interface ReviewReport {
 
 export interface CreateProjectPayload {
   name: string;
-  description?: string;
-  repo_url: string;
-  branch?: string;
+  ssh_url: string;
+  default_branch?: string;
+  ssh_key_env: string;
 }
 
 export interface CreateFeaturePayload {
@@ -94,10 +94,10 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const api = {
   projects: {
-    list: () => request<Project[]>("/api/projects"),
-    get: (id: string) => request<Project>(`/api/projects/${id}`),
+    list: () => request<{ items: Project[]; total: number }>("/api/v1/projects"),
+    get: (id: string) => request<Project>(`/api/v1/projects/${id}`),
     create: (payload: CreateProjectPayload) =>
-      request<Project>("/api/projects", {
+      request<Project>("/api/v1/projects", {
         method: "POST",
         body: JSON.stringify(payload),
       }),
@@ -105,18 +105,18 @@ export const api = {
 
   features: {
     list: (projectId: string) =>
-      request<Feature[]>(`/api/projects/${projectId}/features`),
+      request<{ items: Feature[]; total: number }>(`/api/v1/projects/${projectId}/features`),
     get: (featureId: string) =>
-      request<Feature>(`/api/features/${featureId}`),
+      request<Feature>(`/api/v1/features/${featureId}`),
     create: (projectId: string, payload: CreateFeaturePayload) =>
-      request<Feature>(`/api/projects/${projectId}/features`, {
+      request<Feature>(`/api/v1/projects/${projectId}/features`, {
         method: "POST",
         body: JSON.stringify(payload),
       }),
     executions: (featureId: string) =>
-      request<FeatureExecution[]>(`/api/features/${featureId}/executions`),
+      request<FeatureExecution[]>(`/api/v1/features/${featureId}/executions`),
     review: (featureId: string) =>
-      request<ReviewReport>(`/api/features/${featureId}/review`),
+      request<ReviewReport>(`/api/v1/features/${featureId}/review`),
   },
 
   approvals: {

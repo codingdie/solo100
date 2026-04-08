@@ -11,7 +11,7 @@ export function useProjects() {
   useEffect(() => {
     api.projects
       .list()
-      .then(setProjects)
+      .then((data) => setProjects(data.items))
       .catch((e: Error) => setError(e.message))
       .finally(() => setLoading(false));
   }, []);
