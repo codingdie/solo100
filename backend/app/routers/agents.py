@@ -29,6 +29,21 @@ async def list_agents(db: AsyncSession = Depends(get_db)) -> AgentConfigListResp
     )
 
 
+@router.get("/{agent_id}", response_model=AgentConfigResponse)
+async def get_agent(
+    agent_id: str,
+    db: AsyncSession = Depends(get_db),
+) -> AgentConfigResponse:
+    """Return a single agent configuration by ID."""
+    result = await db.execute(
+        select(AgentConfig).where(AgentConfig.id == agent_id),
+    )
+    agent = result.scalar_one_or_none()
+    if agent is None:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    return AgentConfigResponse.model_validate(agent)
+
+
 @router.post(
     "",
     response_model=AgentConfigResponse,
@@ -92,3 +107,20 @@ async def update_agent(
     await db.flush()
     await db.refresh(agent)
     return AgentConfigResponse.model_validate(agent)
+
+
+@router.delete("/{agent_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_agent(
+    agent_id: str,
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    """Delete an agent configuration."""
+    result = await db.execute(
+        select(AgentConfig).where(AgentConfig.id == agent_id),
+    )
+    agent = result.scalar_one_or_none()
+    if agent is None:
+        raise HTTPException(status_code=404, detail="Agent not found")
+
+    await db.delete(agent)
+    await db.flush()

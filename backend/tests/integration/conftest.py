@@ -10,9 +10,10 @@ from httpx import Client
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
-TEST_DB = "/tmp/solo100-integration.db"
-TEST_GIT_REMOTE = "/tmp/solo100-test-remote.git"
-TEST_WORKTREE_ROOT = "/tmp/solo100-test-worktrees"
+# 统一使用环境变量配置测试路径
+TEST_DB = os.getenv("TEST_DATABASE_PATH", "/tmp/solo100-integration.db")
+TEST_GIT_REMOTE = os.getenv("TEST_GIT_REMOTE", "/tmp/solo100-test-remote.git")
+TEST_WORKTREE_ROOT = os.getenv("TEST_WORKTREE_ROOT", "/tmp/solo100-test-worktrees")
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -56,24 +57,40 @@ def db_engine():
 
 @pytest.fixture(scope="function")
 def db_session(db_engine):
-    """每个测试函数分配一个独立的数据库 session。"""
-    Session = sessionmaker(bind=db_engine)
+    """每个测试函数分配一个独立的数据库 session，使用事务回滚保证隔离。"""
+    connection = db_engine.connect()
+    transaction = connection.begin()
+    Session = sessionmaker(bind=connection)
     session = Session()
+
     try:
         yield session
-        session.commit()
-    except Exception:
-        session.rollback()
-        raise
     finally:
         session.close()
+        transaction.rollback()  # 回滚所有修改，保证测试隔离
+        connection.close()
 
 
 @pytest.fixture(scope="session")
 def sync_client(db_engine):
     """同步 HTTP client，base_url 指向真实运行的 backend。"""
-    # 等待外部启动 backend（由 entrypoint-test.sh 管理）
-    # 此 fixture 假设 backend 已在 localhost:8000 运行
+    import time
+
+    # 等待 backend 就绪（最多 30 秒）
+    backend_ready = False
+    for i in range(30):
+        try:
+            resp = Client(base_url="http://localhost:8000", timeout=2.0).get("/health")
+            if resp.status_code == 200:
+                backend_ready = True
+                break
+        except Exception:
+            pass
+        time.sleep(1)
+
+    if not backend_ready:
+        raise RuntimeError("Backend not ready after 30 seconds")
+
     client = Client(base_url="http://localhost:8000", timeout=30.0)
     yield client
     client.close()

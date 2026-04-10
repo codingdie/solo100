@@ -5,7 +5,7 @@ export TZ=Asia/Shanghai
 
 echo "=== [1/8] 初始化临时 Git bare repo ==="
 mkdir -p /tmp/solo100-test-remote.git
-if [ ! -d /tmp/solo100-test-remote.git/HEAD ]; then
+if [ ! -f /tmp/solo100-test-remote.git/config ]; then
     git init --bare /tmp/solo100-test-remote.git
 fi
 
@@ -50,11 +50,17 @@ for i in $(seq 1 30); do
 done
 echo "Frontend PID: $FRONTEND_PID"
 
-echo "=== [7/8] 运行后端集成测试 ==="
+echo "=== [7/8] 运行后端测试（单元测试 + 集成测试）==="
 cd /app/backend
 export PYTHONPATH=/app/backend
+export REDIS_URL=redis://localhost:6379
+export DATABASE_URL=sqlite+aiosqlite:///./test.db
 export ANTHROPIC_API_KEY=test_key
-pytest tests/integration/ -v --tb=short --color=yes
+# 集成测试环境变量
+export TEST_DATABASE_PATH=/tmp/solo100-integration.db
+export TEST_GIT_REMOTE=/tmp/solo100-test-remote.git
+export TEST_WORKTREE_ROOT=/tmp/solo100-test-worktrees
+pytest tests/ -v --tb=short --color=yes
 BACKEND_RESULT=$?
 
 echo "=== [8/8] 运行前端 E2E 测试 ==="

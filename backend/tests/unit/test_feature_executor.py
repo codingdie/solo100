@@ -158,7 +158,20 @@ class TestExecutorBrainstormingStage:
     async def test_run_brainstorming_writes_execution(
         self, db_session: AsyncSession, feature: Feature
     ) -> None:
+        # Mock Agent to avoid calling real Claude Code CLI
+        from app.services.stage_results import BrainstormResult
+
+        mock_agent = MagicMock()
+        mock_agent.brainstorm = AsyncMock(return_value=BrainstormResult(
+            analysis="Mock analysis",
+            acceptance_criteria=["criteria1", "criteria2"],
+            key_points=["point1"],
+            estimated_risk="low",
+        ))
+
         executor = FeatureExecutor()
+        executor._agent = mock_agent
+
         await executor._transition_to(db_session, feature, FeatureStatus.BRAINSTORMING.value)
         await executor._run_brainstorming(db_session, feature)
         await db_session.flush()
@@ -177,6 +190,75 @@ class TestExecutorBrainstormingStage:
         result = json.loads(latest.result_json or "{}")
         assert "analysis" in result
         assert "acceptance_criteria" in result
+
+
+class TestExecutorPlanningStage:
+    @pytest.mark.asyncio
+    async def test_run_planning_writes_execution(
+        self, db_session: AsyncSession, feature: Feature
+    ) -> None:
+        from app.services.stage_results import Plan
+
+        # 先写入 brainstorming 执行记录，供 planning 阶段读取
+        executor = FeatureExecutor()
+        await executor._write_execution(
+            db_session, feature,
+            ExecutionStage.BRAINSTORMING, ExecutionStatus.COMPLETED,
+            {"analysis": "mock analysis", "acceptance_criteria": ["AC1"], "key_points": [], "estimated_risk": "low"},
+        )
+        await db_session.flush()
+
+        mock_agent = MagicMock()
+        mock_agent.plan = AsyncMock(return_value=Plan(
+            tasks=[{"title": "task1", "description": "d", "files": ["a.py"]}],
+            estimated_risk="low",
+            raw_output="mock plan",
+        ))
+        executor._agent = mock_agent
+
+        await executor._run_planning(db_session, feature)
+        await db_session.flush()
+
+        executions = await db_session.execute(
+            select(FeatureExecution).where(
+                FeatureExecution.feature_id == feature.id,
+                FeatureExecution.stage == ExecutionStage.PLANNING.value,
+            )
+        )
+        record = executions.scalar_one_or_none()
+        assert record is not None
+        assert record.status == ExecutionStatus.COMPLETED.value
+        result = json.loads(record.result_json or "{}")
+        assert "tasks" in result
+        assert len(result["tasks"]) == 1
+
+    @pytest.mark.asyncio
+    async def test_run_planning_transitions_to_planning_status(
+        self, db_session: AsyncSession, feature: Feature
+    ) -> None:
+        from app.services.stage_results import Plan
+
+        executor = FeatureExecutor()
+        await executor._write_execution(
+            db_session, feature,
+            ExecutionStage.BRAINSTORMING, ExecutionStatus.COMPLETED,
+            {"analysis": "a", "acceptance_criteria": [], "key_points": [], "estimated_risk": "low"},
+        )
+        await db_session.flush()
+
+        mock_agent = MagicMock()
+        mock_agent.plan = AsyncMock(return_value=Plan(
+            tasks=[{"title": "t", "description": "d", "files": []}],
+            estimated_risk="low",
+            raw_output="",
+        ))
+        executor._agent = mock_agent
+
+        await executor._run_planning(db_session, feature)
+        await db_session.flush()
+
+        reloaded = await executor._load_feature(db_session, feature.id)
+        assert reloaded.status == FeatureStatus.PLANNING.value
 
 
 class TestExecutorTestingStage:
@@ -246,6 +328,71 @@ class TestExecutorVerifyingStage:
         assert result.passed is False
         assert result.conflicts == ["src/auth.py", "src/config.ts"]
         assert "Rebase conflict" in (result.error_message or "")
+
+
+class TestExecutorReviewingStage:
+    @pytest.mark.asyncio
+    async def test_run_reviewing_writes_execution(
+        self, db_session: AsyncSession, feature: Feature
+    ) -> None:
+        from app.services.review_engine import ReviewReportResult, ReviewIssue
+
+        executor = FeatureExecutor()
+        mock_review_engine = MagicMock()
+        mock_review_engine.review = AsyncMock(return_value=ReviewReportResult(
+            summary="Code looks good",
+            issues=[],
+            ai_raw="",
+        ))
+        executor._review_engine = mock_review_engine
+
+        await executor._run_reviewing(db_session, feature)
+        await db_session.flush()
+
+        executions = await db_session.execute(
+            select(FeatureExecution).where(
+                FeatureExecution.feature_id == feature.id,
+                FeatureExecution.stage == ExecutionStage.REVIEWING.value,
+            )
+        )
+        record = executions.scalar_one_or_none()
+        assert record is not None
+        assert record.status == ExecutionStatus.COMPLETED.value
+        result = json.loads(record.result_json or "{}")
+        assert result["summary"] == "Code looks good"
+        assert result["issues"] == []
+
+    @pytest.mark.asyncio
+    async def test_run_reviewing_records_issues(
+        self, db_session: AsyncSession, feature: Feature
+    ) -> None:
+        from app.services.review_engine import ReviewReportResult, ReviewIssue
+
+        executor = FeatureExecutor()
+        mock_review_engine = MagicMock()
+        mock_review_engine.review = AsyncMock(return_value=ReviewReportResult(
+            summary="Found issues",
+            issues=[
+                ReviewIssue(severity="warning", file="src/auth.py", line=10, description="Missing validation"),
+            ],
+            ai_raw="",
+        ))
+        executor._review_engine = mock_review_engine
+
+        await executor._run_reviewing(db_session, feature)
+        await db_session.flush()
+
+        executions = await db_session.execute(
+            select(FeatureExecution).where(
+                FeatureExecution.feature_id == feature.id,
+                FeatureExecution.stage == ExecutionStage.REVIEWING.value,
+            )
+        )
+        record = executions.scalar_one_or_none()
+        result = json.loads(record.result_json or "{}")
+        assert len(result["issues"]) == 1
+        assert result["issues"][0]["severity"] == "warning"
+        assert result["issues"][0]["file"] == "src/auth.py"
 
 
 class TestExecutorRunPipeline:

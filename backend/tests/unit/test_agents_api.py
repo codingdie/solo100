@@ -80,3 +80,26 @@ async def test_update_agent_not_found(client: AsyncClient) -> None:
         "name": "nope",
     })
     assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_delete_agent(client: AsyncClient) -> None:
+    """DELETE /api/v1/agents/{id} removes the agent."""
+    create_resp = await client.post("/api/v1/agents", json={
+        "name": "to-delete",
+        "api_key_env": "KEY_DEL",
+    })
+    agent_id = create_resp.json()["id"]
+
+    resp = await client.delete(f"/api/v1/agents/{agent_id}")
+    assert resp.status_code == 204
+
+    get_resp = await client.get(f"/api/v1/agents/{agent_id}")
+    assert get_resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_delete_agent_not_found(client: AsyncClient) -> None:
+    """DELETE /api/v1/agents/{id} returns 404 for non-existent id."""
+    resp = await client.delete("/api/v1/agents/nonexistent")
+    assert resp.status_code == 404
